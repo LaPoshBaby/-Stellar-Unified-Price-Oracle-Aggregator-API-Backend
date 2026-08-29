@@ -23,7 +23,7 @@ fn require_gov(env: &Env) -> Result<GovernanceConfig, OracleError> {
 }
 
 fn voting_power(env: &Env, config: &GovernanceConfig, account: &Address) -> i128 {
-    TokenClient::new(env, &config.token).balance(env.clone(), account.clone())
+    TokenClient::new(env, &config.token).balance(&account.clone())
 }
 
 fn resolve_proposal(env: &Env, proposal: &mut GovernanceProposal, config: &GovernanceConfig) {

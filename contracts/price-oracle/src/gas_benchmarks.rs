@@ -16,10 +16,7 @@
 
 #[cfg(test)]
 mod bench {
-    use soroban_sdk::{
-        testutils::{Address as _, Budget},
-        Address, Env, String,
-    };
+    use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
 
     use crate::contract::{PriceOracleContract, PriceOracleContractClient};
 
@@ -27,6 +24,7 @@ mod bench {
 
     fn setup() -> (Env, PriceOracleContractClient<'static>, Address, Address) {
         let env = Env::default();
+        env.mock_all_auths();
         let id = env.register_contract(None, PriceOracleContract);
         let client = PriceOracleContractClient::new(&env, &id);
 
@@ -40,11 +38,11 @@ mod bench {
     }
 
     fn print_budget(label: &str, env: &Env) {
-        let budget = env.budget();
+        let budget = env.cost_estimate().budget();
         println!(
             "[BENCH] {label}: cpu_instructions={}, mem_bytes={}",
-            budget.cpu_instruction_count(),
-            budget.memory_bytes_count(),
+            budget.cpu_instruction_cost(),
+            budget.memory_bytes_cost(),
         );
     }
 
@@ -53,11 +51,12 @@ mod bench {
     #[test]
     fn bench_initialize() {
         let env = Env::default();
+        env.mock_all_auths();
         let id = env.register_contract(None, PriceOracleContract);
         let client = PriceOracleContractClient::new(&env, &id);
         let admin = Address::generate(&env);
 
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         client.initialize(&admin);
         print_budget("initialize", &env);
     }
@@ -69,7 +68,7 @@ mod bench {
         let (env, client, _admin, oracle) = setup();
         let asset = String::from_str(&env, "XLM");
 
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         client.submit_price(&oracle, &asset, &100_000_000i128, &7u32, &0u64);
         print_budget("submit_price (cold)", &env);
     }
@@ -85,7 +84,7 @@ mod bench {
             client.submit_price(&oracle, &asset, &(i as i128 * 1_000_000), &8u32, &i);
         }
 
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         client.submit_price(&oracle, &asset, &50_000_000i128, &8u32, &10u64);
         print_budget("submit_price (warm, 10 history entries)", &env);
     }
@@ -101,7 +100,7 @@ mod bench {
             client.submit_price(&oracle, &asset, &(i as i128 * 1_000), &18u32, &i);
         }
 
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         client.submit_price(&oracle, &asset, &999_999i128, &18u32, &100u64);
         print_budget("submit_price (at cap, 100 history entries, trim)", &env);
     }
@@ -114,7 +113,7 @@ mod bench {
         let asset = String::from_str(&env, "XLM");
         client.submit_price(&oracle, &asset, &100_000_000i128, &7u32, &0u64);
 
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         let _ = client.get_price(&asset);
         print_budget("get_price", &env);
     }
@@ -126,7 +125,7 @@ mod bench {
         let (env, client, _admin, _oracle) = setup();
         let asset = String::from_str(&env, "NONEXISTENT");
 
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         let _ = client.get_price(&asset);
         print_budget("get_price (not found)", &env);
     }
@@ -142,7 +141,7 @@ mod bench {
             client.submit_price(&oracle, &asset, &(i as i128 * 1_000_000), &8u32, &i);
         }
 
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         let _ = client.get_price_history(&asset, &10u32);
         print_budget("get_price_history (limit=10, 20 stored)", &env);
     }
@@ -162,7 +161,7 @@ mod bench {
             );
         }
 
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         let _ = client.get_assets();
         print_budget("get_assets (5 assets)", &env);
     }
@@ -174,7 +173,7 @@ mod bench {
         let (env, client, admin, _oracle) = setup();
         let new_source = Address::generate(&env);
 
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         client.add_oracle_source(&admin, &new_source, &String::from_str(&env, "Redstone"));
         print_budget("add_oracle_source (new)", &env);
     }
@@ -185,7 +184,7 @@ mod bench {
     fn bench_add_oracle_source_duplicate() {
         let (env, client, admin, oracle) = setup();
 
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         // oracle was already added during setup — this is the re-add path
         client.add_oracle_source(&admin, &oracle, &String::from_str(&env, "Chainlink"));
         print_budget("add_oracle_source (duplicate, no-op writes)", &env);
@@ -197,7 +196,7 @@ mod bench {
     fn bench_remove_oracle_source() {
         let (env, client, admin, oracle) = setup();
 
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         client.remove_oracle_source(&admin, &oracle);
         print_budget("remove_oracle_source", &env);
     }
@@ -210,7 +209,7 @@ mod bench {
         let asset = String::from_str(&env, "USDC");
         client.submit_price(&oracle, &asset, &1_000_000i128, &6u32, &0u64);
 
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         client.set_trusted_asset(&admin, &asset, &true);
         print_budget("set_trusted_asset", &env);
     }
@@ -220,26 +219,34 @@ mod bench {
     #[test]
     fn bench_multi_source_submit() {
         let env = Env::default();
+        env.mock_all_auths();
         let id = env.register_contract(None, PriceOracleContract);
         let client = PriceOracleContractClient::new(&env, &id);
 
         let admin = Address::generate(&env);
         client.initialize(&admin);
 
-        let sources: Vec<(Address, &str)> = vec![
-            (Address::generate(&env), "Chainlink"),
-            (Address::generate(&env), "Redstone"),
-            (Address::generate(&env), "Band"),
-        ];
-        for (src, name) in &sources {
-            client.add_oracle_source(&admin, src, &String::from_str(&env, name));
+        let mut sources: Vec<Address> = Vec::new(&env);
+        let mut names: Vec<String> = Vec::new(&env);
+        for name in ["Chainlink", "Redstone", "Band"] {
+            sources.push_back(Address::generate(&env));
+            names.push_back(String::from_str(&env, name));
+        }
+        for i in 0..sources.len() {
+            client.add_oracle_source(&admin, &sources.get(i).unwrap(), &names.get(i).unwrap());
         }
 
         let asset = String::from_str(&env, "XLM");
 
-        env.budget().reset_default();
-        for (i, (src, _)) in sources.iter().enumerate() {
-            client.submit_price(src, &asset, &(100_000_000i128 + i as i128), &7u32, &(i as u64));
+        env.cost_estimate().budget().reset_default();
+        for i in 0..sources.len() {
+            client.submit_price(
+                &sources.get(i).unwrap(),
+                &asset,
+                &(100_000_000i128 + i as i128),
+                &7u32,
+                &(i as u64),
+            );
         }
         print_budget("3-source submit_price round", &env);
     }
@@ -266,10 +273,10 @@ mod bench {
         // one-time cold path).
         client.submit_price(&oracle, &asset, &1i128, &7u32, &0u64);
 
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         client.submit_price(&oracle, &asset, &2i128, &7u32, &1u64);
-        let per_submission_cpu = env.budget().cpu_instruction_count();
-        let per_submission_mem = env.budget().memory_bytes_count();
+        let per_submission_cpu = env.cost_estimate().budget().cpu_instruction_cost();
+        let per_submission_mem = env.cost_estimate().budget().memory_bytes_cost();
 
         let submissions_per_month =
             DEFAULT_ASSET_COUNT * (SECONDS_PER_MONTH / SUBMISSION_CADENCE_SECS);

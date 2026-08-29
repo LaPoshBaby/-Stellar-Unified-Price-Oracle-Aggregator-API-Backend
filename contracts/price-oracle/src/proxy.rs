@@ -1,9 +1,3 @@
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
-
-use crate::errors::OracleError;
-use crate::storage;
-use crate::types::{AssetPrice, MultiSigConfig, PriceDataPoint, SourceReputation};
-
 // Issue #68: Proxy contract with upgradeability via WASM hash replacement.
 //
 // Storage collision prevention: proxy-configuration keys (Implementation,
@@ -13,6 +7,20 @@ use crate::types::{AssetPrice, MultiSigConfig, PriceDataPoint, SourceReputation}
 // both sets.  If a new storage layout is introduced, bump
 // StorageLayoutVersion via `set_storage_layout_version` before or after the
 // WASM swap so migration code can detect the change.
+//
+// Issue #298 — the shared helpers (deviation_exceeds, update_reputation,
+// calculate_usd_price, ...) are imported from crate::utils instead of being
+// duplicated here, so proxy and oracle behavior can never drift apart.
+
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
+
+use crate::errors::OracleError;
+use crate::storage;
+use crate::types::{AssetPrice, MultiSigConfig, PriceDataPoint, SourceReputation};
+use crate::utils;
+
+// Issue #375 — minimum delay between a queued WASM upgrade and its execution.
+const UPGRADE_TIMELOCK_SECS: u64 = 172_800; // 48 hours
 
 #[contract]
 pub struct ProxyContract;
@@ -78,13 +86,13 @@ impl ProxyContract {
         signer.require_auth();
 
         let config = storage::get_multisig_config(&env).ok_or(OracleError::MultiSigNotInitialized)?;
-        if !vec_contains_address(&config.signers, &signer) {
+        if !utils::vec_contains_address(&config.signers, &signer) {
             return Err(OracleError::NotASigner);
         }
         storage::get_pending_upgrade(&env).ok_or(OracleError::UpgradeNotProposed)?;
 
         let approvals = storage::get_upgrade_approvals(&env);
-        if vec_contains_address(&approvals, &signer) {
+        if utils::vec_contains_address(&approvals, &signer) {
             return Err(OracleError::UpgradeAlreadyApproved);
         }
 
@@ -288,7 +296,7 @@ impl ProxyContract {
 
     pub fn get_source_reputation(env: Env, source: Address) -> Option<SourceReputation> {
         let rep = storage::get_source_reputation(&env, &source)?;
-        Some(apply_reputation_decay(&env, rep))
+        Some(utils::apply_reputation_decay(&env, rep))
     }
 
     pub fn reset_reputation(
@@ -323,14 +331,14 @@ impl ProxyContract {
         // Issue #69: deviation guard
         if let Some(threshold_bps) = storage::get_deviation_threshold(&env) {
             if let Some(prev) = storage::get_latest_price(&env, &asset) {
-                if deviation_exceeds(price, prev.price, threshold_bps) {
+                if utils::deviation_exceeds(price, prev.price, threshold_bps) {
                     return Err(OracleError::PriceDeviationTooLarge);
                 }
             }
         }
 
         // Issue #70: update reputation before overwriting latest price
-        update_reputation(&env, &source, price, &asset, timestamp);
+        utils::update_reputation(&env, &source, price, &asset, timestamp);
 
         let data_point = PriceDataPoint {
             asset: asset.clone(),
@@ -341,10 +349,7 @@ impl ProxyContract {
         };
 
         storage::set_latest_price(&env, &asset, &data_point);
-
-        let mut history = storage::get_price_history(&env, &asset);
-        history.push_back(data_point.clone());
-        storage::set_price_history(&env, &asset, &history);
+        utils::append_history(&env, &asset, data_point.clone());
 
         env.events()
             .publish(("price_submitted", asset, source), (price, timestamp));
@@ -361,7 +366,7 @@ impl ProxyContract {
             asset: data_point.asset.clone(),
             price: data_point.price,
             decimals: data_point.decimals,
-            price_usd: calculate_usd_price(&env, &data_point.asset, data_point.price, data_point.decimals),
+            price_usd: utils::calculate_usd_price(&env, &data_point.asset, data_point.price, data_point.decimals),
             timestamp: data_point.timestamp,
             source: data_point.source,
             num_sources,
@@ -421,97 +426,3 @@ impl ProxyContract {
         Ok(())
     }
 }
-
-// -------------------------------------------------------------------------
-// Shared helpers (duplicated from contract.rs; cannot call across contracts
-// within the same crate without cross-contract invocation overhead)
-// -------------------------------------------------------------------------
-
-const REPUTATION_ACCURACY_THRESHOLD_BPS: u128 = 2000;
-const REPUTATION_DECAY_PERIOD_SECS: u64 = 604_800;
-// Issue #375 — minimum delay between a queued WASM upgrade and its execution.
-const UPGRADE_TIMELOCK_SECS: u64 = 172_800; // 48 hours
-
-fn vec_contains_address(vec: &Vec<Address>, target: &Address) -> bool {
-    for i in 0..vec.len() {
-        if let Some(addr) = vec.get(i) {
-            if &addr == target {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn deviation_exceeds(new_price: i128, prev_price: i128, threshold_bps: u32) -> bool {
-    if prev_price == 0 {
-        return false;
-    }
-    let prev_abs = prev_price.unsigned_abs();
-    let diff: u128 = if (new_price >= 0) == (prev_price >= 0) {
-        let new_abs = new_price.unsigned_abs();
-        if new_abs >= prev_abs { new_abs - prev_abs } else { prev_abs - new_abs }
-    } else {
-        new_price.unsigned_abs().saturating_add(prev_abs)
-    };
-    diff.saturating_mul(10_000) / prev_abs > threshold_bps as u128
-}
-
-fn update_reputation(env: &Env, source: &Address, new_price: i128, asset: &String, timestamp: u64) {
-    let is_accurate = match storage::get_latest_price(env, asset) {
-        None => true,
-        Some(prev) => !deviation_exceeds(new_price, prev.price, REPUTATION_ACCURACY_THRESHOLD_BPS as u32),
-    };
-
-    let mut rep = storage::get_source_reputation(env, source).unwrap_or(SourceReputation {
-        score: 10_000,
-        total_submissions: 0,
-        accurate_submissions: 0,
-        last_updated: timestamp,
-    });
-
-    rep.total_submissions = rep.total_submissions.saturating_add(1);
-    if is_accurate {
-        rep.accurate_submissions = rep.accurate_submissions.saturating_add(1);
-    }
-    rep.score = if rep.total_submissions == 0 {
-        10_000
-    } else {
-        (rep.accurate_submissions as u32).saturating_mul(10_000) / rep.total_submissions
-    };
-    rep.last_updated = timestamp;
-    storage::set_source_reputation(env, source, &rep);
-}
-
-fn apply_reputation_decay(env: &Env, mut rep: SourceReputation) -> SourceReputation {
-    let now = env.ledger().timestamp();
-    let elapsed = now.saturating_sub(rep.last_updated);
-    if elapsed < REPUTATION_DECAY_PERIOD_SECS {
-        return rep;
-    }
-    let periods = (elapsed / REPUTATION_DECAY_PERIOD_SECS).min(40) as u32;
-    for _ in 0..periods {
-        rep.score = rep.score.saturating_mul(95) / 100;
-    }
-    rep
-}
-
-fn calculate_usd_price(env: &Env, asset: &String, price: i128, decimals: u32) -> Option<i128> {
-    let xlm = String::from_str(env, "XLM");
-    if asset == &xlm {
-        return Some(price);
-    }
-    let usdc = String::from_str(env, "USDC");
-    if let Some(usdc_anchor) = storage::get_latest_price(env, &usdc) {
-        if asset == &usdc {
-            return Some(10i128.pow(decimals));
-        }
-        if let Some(xlm_price) = storage::get_latest_price(env, &xlm) {
-            let base_asset_price = (price * xlm_price.price * 10i128.pow(decimals))
-                / (10i128.pow(decimals) * 10i128.pow(usdc_anchor.decimals));
-            return Some(base_asset_price);
-        }
-    }
-    None
-}
-

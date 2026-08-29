@@ -17,6 +17,17 @@ use soroban_sdk::{Bytes, Env};
 
 use crate::types::BatchPriceEntry;
 
+// Issue #385 — gas-based griefing bound.
+//
+// `apply_batch_entry` is permissionless, so an attacker could otherwise pass
+// an arbitrarily long sibling path and force the contract to burn gas on
+// hash operations in every block.  A valid Merkle proof for a batch of up to
+// 2^63 entries needs at most 63 siblings, so capping the accepted path here
+// bounds the per-call hashing cost without rejecting any legitimate proof.
+// The caller always pays for the gas their own proof consumes, but this cap
+// makes the worst case explicit and cheap to reason about.
+pub const MAX_PROOF_SIBLINGS: u32 = 64;
+
 // ── Leaf encoding ─────────────────────────────────────────────────────────────
 
 /// Compute the canonical SHA-256 leaf hash for a BatchPriceEntry.
@@ -79,6 +90,10 @@ pub fn verify_proof(
     siblings: &soroban_sdk::Vec<Bytes>,
     root: &Bytes,
 ) -> bool {
+    if siblings.len() > MAX_PROOF_SIBLINGS {
+        return false;
+    }
+
     let mut current = hash_leaf(env, entry);
     let mut index = leaf_index;
 
