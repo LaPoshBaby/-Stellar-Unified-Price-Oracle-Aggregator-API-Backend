@@ -96,6 +96,22 @@
 
   <section id="usage">
     <div class="card">
+      <h3>Quick-start SDKs</h3>
+      <p class="muted">Production-ready examples for the most common client libraries, plus links to the sandbox and live API docs.</p>
+      <ul>
+        <li><a href="https://github.com/Stellar-Unified-Price-Oracle" target="_blank" rel="noreferrer">TypeScript SDK</a></li>
+        <li><a href="https://github.com/Stellar-Unified-Price-Oracle" target="_blank" rel="noreferrer">Python SDK</a></li>
+        <li><a href="https://github.com/Stellar-Unified-Price-Oracle" target="_blank" rel="noreferrer">Go SDK</a></li>
+      </ul>
+      <pre>curl -H 'x-api-key: &lt;api_key&gt;' 'https://api.example.com/api/v1/prices?asset=XLM'</pre>
+    </div>
+    <div class="card">
+      <h3>Sandbox</h3>
+      <p class="muted">Use the isolated sandbox to validate your app before hitting production endpoints.</p>
+      <pre>curl https://sandbox.example/api/v1/sandbox/info
+curl -X POST https://sandbox.example/api/v1/sandbox/reset -H 'x-sandbox-reset-token: &lt;local-token&gt;'</pre>
+    </div>
+    <div class="card">
       <h3>Usage Statistics</h3>
       <p class="muted">Per-key request counts and last-used timestamps, pulled live from the key registry.</p>
       <button class="action" onclick="loadUsage()">Refresh</button>
