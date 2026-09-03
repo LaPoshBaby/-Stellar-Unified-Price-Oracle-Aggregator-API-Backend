@@ -8,6 +8,7 @@ mod multisig;
 mod proxy;
 pub mod storage;
 mod types;
+mod utils;
 
 #[cfg(test)]
 mod test;
@@ -15,6 +16,8 @@ mod test;
 mod fuzz;
 #[cfg(test)]
 mod governance_test;
+#[cfg(test)]
+mod merkle_test;
 #[cfg(test)]
 mod proxy_test;
 #[cfg(test)]

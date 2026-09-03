@@ -5,7 +5,7 @@ use soroban_sdk::{Address, Env, String, Vec};
 use crate::storage;
 use crate::types::{AssetPrice, PriceDataPoint, SourceReputation};
 
-use super::utils;
+use crate::utils;
 
 pub(crate) fn get_price(env: &Env, asset: &String) -> Option<AssetPrice> {
     let data_point = storage::get_latest_price(env, asset)?;

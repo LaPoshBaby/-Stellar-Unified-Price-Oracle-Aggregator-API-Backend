@@ -9,7 +9,9 @@
 //   - admin.rs      — admin-only configuration and treasury operations
 //   - governance.rs — multi-sig proposal lifecycle + emergency pause
 //   - queries.rs    — read-only price/reputation queries
-//   - utils.rs      — shared helpers used by the modules above
+//
+// Shared helpers live in crate::utils (Issue #298), used by both
+// PriceOracleContract and ProxyContract.
 
 use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, String, Vec};
 
@@ -23,7 +25,6 @@ mod admin;
 mod governance;
 mod queries;
 mod submission;
-mod utils;
 
 #[contract]
 pub struct PriceOracleContract;
@@ -67,6 +68,20 @@ impl PriceOracleContract {
         proof: MerkleProof,
     ) -> Result<PriceDataPoint, OracleError> {
         submission::apply_batch_entry(&env, batch_nonce, &entry, &proof)
+    }
+
+    pub fn get_batch_nonce(env: Env) -> u64 {
+        submission::get_batch_nonce(&env)
+    }
+
+    /// Read-only inclusion check used by off-chain tooling and tests.
+    pub fn verify_batch_proof(
+        env: Env,
+        batch_nonce: u64,
+        entry: BatchPriceEntry,
+        proof: MerkleProof,
+    ) -> bool {
+        submission::verify_batch_proof(&env, batch_nonce, &entry, &proof)
     }
 
     // ── Staking / slashing ─────────────────────────────────────────────────
@@ -222,5 +237,13 @@ impl PriceOracleContract {
 
     pub fn extend_storage_ttl(env: Env) {
         admin::extend_storage_ttl(&env);
+    }
+
+    pub fn extend_price_history_ttl(env: Env, asset: String, threshold: u32, extend_to: u32) {
+        admin::extend_price_history_ttl(&env, &asset, threshold, extend_to);
+    }
+
+    pub fn extend_instance_ttl(env: Env, threshold: u32, extend_to: u32) {
+        admin::extend_instance_ttl(&env, threshold, extend_to);
     }
 }

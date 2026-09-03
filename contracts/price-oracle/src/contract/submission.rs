@@ -7,7 +7,7 @@ use crate::merkle;
 use crate::storage;
 use crate::types::{BatchPriceEntry, MerkleProof, PriceDataPoint};
 
-use super::utils;
+use crate::utils;
 
 pub(crate) fn submit_price(
     env: &Env,
@@ -130,6 +130,11 @@ pub(crate) fn apply_batch_entry(
         return Err(OracleError::InvalidMerkleProof);
     }
 
+    // Issue #385 — each (batch, leaf) pair can be applied exactly once; a
+    // repeated apply of an already-applied leaf fails with
+    // BatchEntryAlreadyApplied instead of writing a duplicate history entry.
+    storage::mark_batch_leaf_applied(env, batch_nonce, proof.leaf_index)?;
+
     let data_point = PriceDataPoint {
         asset: entry.asset.clone(),
         price: entry.price,
@@ -147,6 +152,23 @@ pub(crate) fn apply_batch_entry(
     );
 
     Ok(data_point)
+}
+
+pub(crate) fn get_batch_nonce(env: &Env) -> u64 {
+    storage::get_batch_nonce(env)
+}
+
+/// Read-only inclusion check used by off-chain tooling and tests.
+pub(crate) fn verify_batch_proof(
+    env: &Env,
+    batch_nonce: u64,
+    entry: &BatchPriceEntry,
+    proof: &MerkleProof,
+) -> bool {
+    let Some(root) = storage::get_batch_root(env, batch_nonce) else {
+        return false;
+    };
+    merkle::verify_proof(env, entry, proof.leaf_index, &proof.siblings, &root)
 }
 
 // ── Staking / slashing ───────────────────────────────────────────────────────

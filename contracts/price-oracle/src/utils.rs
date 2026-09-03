@@ -1,4 +1,9 @@
-// Issue #297 — shared helpers used by the price-oracle contract modules.
+// Issue #298 — Shared helpers used by both PriceOracleContract (contract/) and
+// ProxyContract (proxy.rs).  Previously duplicated in each file with subtle
+// drift (e.g. two different USD-conversion formulas); a single implementation
+// here keeps behavior identical across both entry points.
+//
+// All helpers are pure with respect to storage except where noted.
 
 use soroban_sdk::{Address, Env, String, Vec};
 
@@ -6,18 +11,18 @@ use crate::storage;
 use crate::types::{PriceDataPoint, SourceReputation};
 
 // Basis points threshold below which a submission is counted as accurate for reputation.
-pub(crate) const REPUTATION_ACCURACY_THRESHOLD_BPS: u128 = 2000; // 20%
+pub const REPUTATION_ACCURACY_THRESHOLD_BPS: u128 = 2000; // 20%
 // Seconds between reputation decay applications (~7 days).
-pub(crate) const REPUTATION_DECAY_PERIOD_SECS: u64 = 604_800;
+pub const REPUTATION_DECAY_PERIOD_SECS: u64 = 604_800;
 // Decay factor per period: score = score * 95 / 100.
-pub(crate) const REPUTATION_DECAY_NUMERATOR: u32 = 95;
-pub(crate) const REPUTATION_DECAY_DENOMINATOR: u32 = 100;
+pub const REPUTATION_DECAY_NUMERATOR: u32 = 95;
+pub const REPUTATION_DECAY_DENOMINATOR: u32 = 100;
 
 // ── History ──────────────────────────────────────────────────────────────────
 
 /// Append a data point to an asset's price history, capping it at
 /// storage::MAX_HISTORY_LEN to keep the persistent-storage entry size bounded.
-pub(crate) fn append_history(env: &Env, asset: &String, data_point: PriceDataPoint) {
+pub fn append_history(env: &Env, asset: &String, data_point: PriceDataPoint) {
     let mut history = storage::get_price_history(env, asset);
     if history.len() >= storage::MAX_HISTORY_LEN {
         // Drop the oldest entry (index 0) by rebuilding from index 1.
@@ -41,7 +46,7 @@ pub(crate) fn append_history(env: &Env, asset: &String, data_point: PriceDataPoi
 /// Returns true when the new price deviates from prev_price by more than
 /// threshold_bps.  Uses u128 arithmetic throughout to avoid i128 overflow
 /// under any input.
-pub(crate) fn deviation_exceeds(new_price: i128, prev_price: i128, threshold_bps: u32) -> bool {
+pub fn deviation_exceeds(new_price: i128, prev_price: i128, threshold_bps: u32) -> bool {
     if prev_price == 0 {
         return false;
     }
@@ -64,7 +69,7 @@ pub(crate) fn deviation_exceeds(new_price: i128, prev_price: i128, threshold_bps
 
 // ── Issue #70 — reputation helpers ───────────────────────────────────────────
 
-pub(crate) fn update_reputation(
+pub fn update_reputation(
     env: &Env,
     source: &Address,
     new_price: i128,
@@ -101,7 +106,7 @@ pub(crate) fn update_reputation(
     storage::set_source_reputation(env, source, &rep);
 }
 
-pub(crate) fn apply_reputation_decay(env: &Env, mut rep: SourceReputation) -> SourceReputation {
+pub fn apply_reputation_decay(env: &Env, mut rep: SourceReputation) -> SourceReputation {
     let now = env.ledger().timestamp();
     let elapsed = now.saturating_sub(rep.last_updated);
     if elapsed < REPUTATION_DECAY_PERIOD_SECS {
@@ -129,12 +134,7 @@ pub(crate) fn apply_reputation_decay(env: &Env, mut rep: SourceReputation) -> So
 ///
 /// All arithmetic is checked; on overflow (e.g. pathological decimal counts)
 /// the conversion returns `None` instead of panicking, so reads stay safe.
-pub(crate) fn calculate_usd_price(
-    env: &Env,
-    asset: &String,
-    price: i128,
-    decimals: u32,
-) -> Option<i128> {
+pub fn calculate_usd_price(env: &Env, asset: &String, price: i128, decimals: u32) -> Option<i128> {
     let xlm = String::from_str(env, "XLM");
     if asset == &xlm {
         return Some(price);
@@ -153,7 +153,7 @@ pub(crate) fn calculate_usd_price(
 
 // ── Address collections ──────────────────────────────────────────────────────
 
-pub(crate) fn vec_contains_address(vec: &Vec<Address>, target: &Address) -> bool {
+pub fn vec_contains_address(vec: &Vec<Address>, target: &Address) -> bool {
     for i in 0..vec.len() {
         if let Some(addr) = vec.get(i) {
             if &addr == target {

@@ -9,7 +9,7 @@ use crate::errors::OracleError;
 use crate::storage;
 use crate::types::{MultiSigConfig, MultiSigProposal, ProposalAction};
 
-use super::utils;
+use crate::utils;
 
 pub(crate) fn init_multisig(
     env: &Env,

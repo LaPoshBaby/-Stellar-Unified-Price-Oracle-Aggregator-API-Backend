@@ -16,7 +16,13 @@
 
 #[cfg(test)]
 mod bench {
-    use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
+    extern crate std;
+    use std::{println, vec, vec::Vec};
+
+    use soroban_sdk::{
+        testutils::{budget::Budget, Address as _},
+        Address, Bytes, Env, String,
+    };
 
     use crate::contract::{PriceOracleContract, PriceOracleContractClient};
 
@@ -212,6 +218,18 @@ mod bench {
         env.cost_estimate().budget().reset_default();
         client.set_trusted_asset(&admin, &asset, &true);
         print_budget("set_trusted_asset", &env);
+    }
+
+    // ── submit_batch (commit a Merkle root; Issue #378 mainnet budget) ───────
+
+    #[test]
+    fn bench_submit_batch() {
+        let (env, client, _admin, oracle) = setup();
+        let root = Bytes::from_array(&env, &[7u8; 32]);
+
+        env.budget().reset_default();
+        client.submit_batch(&oracle, &0u64, &root);
+        print_budget("submit_batch (commit root)", &env);
     }
 
     // ── Multi-source submit (3 sources, measures realistic aggregator load) ───
